@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 
@@ -20,6 +21,9 @@ async def main() -> None:
 
     init_db(settings.SQLITE_PATH)
     logger.info("Database initialized at %s", settings.SQLITE_PATH)
+    inbox_dir = Path("bot/storage/inbox")
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Inbox directory ready at %s", inbox_dir.as_posix())
 
     bot = Bot(token=settings.BOT_TOKEN)
     dispatcher = Dispatcher()
