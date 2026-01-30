@@ -106,14 +106,22 @@ def create_task(
 
 def get_task(
     sqlite_path: str, task_id: int
-) -> tuple[int, int, str, str | None, str | None, str | None, str, int] | None:
+) -> tuple[int, int, str, str | None, str | None, str | None, str | None, str, int] | None:
     """Fetch a task with key download metadata."""
 
     with get_connection(sqlite_path) as connection:
         cursor = connection.cursor()
         cursor.execute(
             """
-            SELECT user_id, tg_message_id, media_type, file_id, caption, src_path, status, attempts
+            SELECT user_id,
+                   tg_message_id,
+                   media_type,
+                   file_id,
+                   caption,
+                   src_path,
+                   prepared_path,
+                   status,
+                   attempts
             FROM tasks
             WHERE id = ?
             """,
@@ -129,8 +137,9 @@ def get_task(
             row[3],
             row[4],
             row[5],
-            str(row[6]),
-            int(row[7] or 0),
+            row[6],
+            str(row[7]),
+            int(row[8] or 0),
         )
 
 
@@ -146,6 +155,54 @@ def set_task_status(sqlite_path: str, task_id: int, status: str) -> None:
             WHERE id = ?
             """,
             (status, task_id),
+        )
+        connection.commit()
+
+
+def set_task_preparing(sqlite_path: str, task_id: int) -> None:
+    """Mark task as preparing."""
+
+    with get_connection(sqlite_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE tasks
+            SET status = ?, last_error = NULL
+            WHERE id = ?
+            """,
+            ("preparing", task_id),
+        )
+        connection.commit()
+
+
+def set_task_prepared(sqlite_path: str, task_id: int, prepared_path: str) -> None:
+    """Mark task as prepared with the prepared path."""
+
+    with get_connection(sqlite_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE tasks
+            SET prepared_path = ?, status = ?, last_error = NULL
+            WHERE id = ?
+            """,
+            (prepared_path, "prepared", task_id),
+        )
+        connection.commit()
+
+
+def set_task_failed(sqlite_path: str, task_id: int, error_text: str) -> None:
+    """Mark task as failed with an error."""
+
+    with get_connection(sqlite_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE tasks
+            SET status = ?, last_error = ?
+            WHERE id = ?
+            """,
+            ("failed", error_text, task_id),
         )
         connection.commit()
 
@@ -213,8 +270,15 @@ def get_pending_task_ids(sqlite_path: str) -> list[int]:
             """
             SELECT id
             FROM tasks
-            WHERE status IN ("queued", "downloading")
-              AND (src_path IS NULL OR src_path = "")
+            WHERE (
+                status IN ("queued", "downloading")
+                AND (src_path IS NULL OR src_path = "")
+            )
+            OR (
+                status IN ("downloaded", "preparing")
+                AND src_path IS NOT NULL
+                AND src_path != ""
+            )
             ORDER BY id
             """
         )
