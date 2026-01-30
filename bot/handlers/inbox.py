@@ -1,18 +1,16 @@
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.types import Message
 
 from bot.config import load_settings
-from bot.db import create_task, update_task_src_path
+from bot.db import create_task
+from bot.services.queue import enqueue_task
 
 router = Router()
 logger = logging.getLogger(__name__)
 settings = load_settings()
-
-INBOX_DIR = Path("bot/storage/inbox")
 
 
 def is_whitelisted(message: Message) -> bool:
@@ -44,39 +42,17 @@ async def handle_photo(message: Message) -> None:
         media_type="photo",
         file_id=file_id,
         caption=message.caption,
-        status="new",
+        status="queued",
         created_at=now_iso(),
     )
+    enqueue_task(task_id)
     logger.info(
         "Accepted photo from user %s message %s -> task %s",
         message.from_user.id,
         message.message_id,
         task_id,
     )
-    try:
-        INBOX_DIR.mkdir(parents=True, exist_ok=True)
-        file = await message.bot.get_file(file_id)
-        file_path = file.file_path
-        logger.info(
-            "Download start task %s file_id %s file_path %s",
-            task_id,
-            file_id,
-            file_path,
-        )
-        extension = Path(file_path).suffix or ".jpg"
-        filename = f"task_{task_id}_{message.message_id}{extension}"
-        target_path = INBOX_DIR / filename
-        await message.bot.download_file(file_path, destination=target_path)
-    except Exception as exc:
-        update_task_src_path(settings.SQLITE_PATH, task_id, None, "failed")
-        logger.exception("Download failed task %s: %s", task_id, exc)
-        await message.answer(f"Не смог скачать файл. Задача #{task_id}.")
-        return
-
-    src_path = target_path.as_posix()
-    update_task_src_path(settings.SQLITE_PATH, task_id, src_path, "downloaded")
-    logger.info("Download ok task %s src_path %s", task_id, src_path)
-    await message.answer(f"Принял. Скачал. Задача #{task_id}.")
+    await message.answer(f"Принял. Задача #{task_id} поставлена в очередь.")
 
 
 @router.message(F.chat.type == "private", F.video)
@@ -95,45 +71,17 @@ async def handle_video(message: Message) -> None:
         media_type="video",
         file_id=file_id,
         caption=message.caption,
-        status="new",
+        status="queued",
         created_at=now_iso(),
     )
+    enqueue_task(task_id)
     logger.info(
         "Accepted video from user %s message %s -> task %s",
         message.from_user.id,
         message.message_id,
         task_id,
     )
-    if not file_id:
-        update_task_src_path(settings.SQLITE_PATH, task_id, None, "failed")
-        logger.error("Download failed task %s: missing file_id", task_id)
-        await message.answer(f"Не смог скачать файл. Задача #{task_id}.")
-        return
-
-    try:
-        INBOX_DIR.mkdir(parents=True, exist_ok=True)
-        file = await message.bot.get_file(file_id)
-        file_path = file.file_path
-        logger.info(
-            "Download start task %s file_id %s file_path %s",
-            task_id,
-            file_id,
-            file_path,
-        )
-        extension = Path(file_path).suffix or ".mp4"
-        filename = f"task_{task_id}_{message.message_id}{extension}"
-        target_path = INBOX_DIR / filename
-        await message.bot.download_file(file_path, destination=target_path)
-    except Exception as exc:
-        update_task_src_path(settings.SQLITE_PATH, task_id, None, "failed")
-        logger.exception("Download failed task %s: %s", task_id, exc)
-        await message.answer(f"Не смог скачать файл. Задача #{task_id}.")
-        return
-
-    src_path = target_path.as_posix()
-    update_task_src_path(settings.SQLITE_PATH, task_id, src_path, "downloaded")
-    logger.info("Download ok task %s src_path %s", task_id, src_path)
-    await message.answer(f"Принял. Скачал. Задача #{task_id}.")
+    await message.answer(f"Принял. Задача #{task_id} поставлена в очередь.")
 
 
 @router.message(F.chat.type == "private", F.text, ~F.photo, ~F.video)

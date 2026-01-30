@@ -10,6 +10,7 @@ from bot.config import load_settings
 from bot.db import init_db
 from bot.handlers import inbox, start
 from bot.logging_setup import setup_logging
+from bot.services.queue import init_queue, requeue_pending_tasks, start_workers
 
 
 async def main() -> None:
@@ -29,6 +30,12 @@ async def main() -> None:
     dispatcher = Dispatcher()
     dispatcher.include_router(start.router)
     dispatcher.include_router(inbox.router)
+
+    init_queue(bot, settings)
+    start_workers()
+    requeued = requeue_pending_tasks(settings.SQLITE_PATH)
+    if requeued:
+        logger.info("Requeued pending tasks: %s", requeued)
 
     logger.info("Starting bot polling")
     await dispatcher.start_polling(bot)
