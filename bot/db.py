@@ -89,3 +89,24 @@ def create_task(
         )
         connection.commit()
         return int(cursor.lastrowid)
+
+
+def update_task_src_path(
+    sqlite_path: str,
+    task_id: int,
+    src_path: str | None,
+    status: str,
+) -> None:
+    """Update the src_path and status fields for a task."""
+
+    with get_connection(sqlite_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE tasks
+            SET src_path = ?, status = ?
+            WHERE id = ?
+            """,
+            (src_path, status, task_id),
+        )
+        connection.commit()
