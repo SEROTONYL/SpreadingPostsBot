@@ -11,6 +11,7 @@ from bot.config import Settings
 from bot.db import (
     get_pending_task_ids,
     get_task,
+    get_task_caption,
     increment_attempt,
     set_task_downloaded,
     set_task_failed,
@@ -120,14 +121,28 @@ async def _process_task(task_id: int) -> None:
         attempts,
     ) = task
 
+    if media_type == "text":
+        logger.info("task %s is text, skipping", task_id)
+        return
     if status == "failed":
         logger.info("task %s already failed, skipping", task_id)
         return
     if status == "prepared" and prepared_path:
-        logger.info("task %s already prepared, skipping", task_id)
-        return
-    if media_type == "text":
-        logger.info("task %s is text, skipping", task_id)
+        try:
+            await _notify_prepared_media(
+                user_id=user_id,
+                task_id=task_id,
+                media_type=media_type,
+                prepared_path=Path(prepared_path),
+            )
+        except Exception as exc:
+            logger.error("notify failed task_id %s error %s", task_id, exc)
+            await _handle_notify_failure(
+                task_id=task_id,
+                user_id=user_id,
+                attempts=attempts,
+                error=exc,
+            )
         return
 
     if src_path and status in {"queued", "downloading"}:
@@ -176,12 +191,22 @@ async def _process_task(task_id: int) -> None:
             )
             set_task_prepared(_SETTINGS.SQLITE_PATH, task_id, prepared_path.as_posix())
             logger.info("prepare ok task %s path %s", task_id, prepared_path.as_posix())
-            await _send_prepared_media(
-                user_id=user_id,
-                task_id=task_id,
-                media_type=media_type,
-                prepared_path=prepared_path,
-            )
+            try:
+                await _notify_prepared_media(
+                    user_id=user_id,
+                    task_id=task_id,
+                    media_type=media_type,
+                    prepared_path=prepared_path,
+                )
+            except Exception as exc:
+                logger.error("notify failed task_id %s error %s", task_id, exc)
+                await _handle_notify_failure(
+                    task_id=task_id,
+                    user_id=user_id,
+                    attempts=attempts,
+                    error=exc,
+                )
+                return
         except Exception as exc:
             logger.error("prepare failed task %s error %s", task_id, exc)
             await _handle_failure(
@@ -215,6 +240,30 @@ async def _handle_failure(
     if attempt_number >= _SETTINGS.MAX_RETRIES:
         set_task_failed(_SETTINGS.SQLITE_PATH, task_id, str(error))
         await _BOT.send_message(user_id, f"{failure_message} #{task_id}.")
+        return
+    delay = _next_delay(attempt_number)
+    logger.info("retry scheduled task_id %s delay %s", task_id, delay)
+    asyncio.create_task(delayed_reenqueue(task_id, delay))
+
+
+async def _handle_notify_failure(
+    *,
+    task_id: int,
+    user_id: int,
+    attempts: int,
+    error: Exception,
+) -> None:
+    if _BOT is None or _SETTINGS is None:
+        raise RuntimeError("Queue service is not initialized.")
+
+    attempt_number = attempts + 1
+    error_text = f"notify failed: {error}"
+    increment_attempt(_SETTINGS.SQLITE_PATH, task_id, error_text)
+    if attempt_number >= _SETTINGS.MAX_RETRIES:
+        set_task_failed(_SETTINGS.SQLITE_PATH, task_id, error_text)
+        await _BOT.send_message(
+            user_id, f"Не смог отправить готовый файл. Задача #{task_id}."
+        )
         return
     delay = _next_delay(attempt_number)
     logger.info("retry scheduled task_id %s delay %s", task_id, delay)
@@ -276,17 +325,18 @@ async def _prepare_media(
     return await prepare_to_story(src_path, media_type, out_path)
 
 
-async def _send_prepared_media(
+async def _notify_prepared_media(
     *,
     user_id: int,
     task_id: int,
     media_type: str,
     prepared_path: Path,
 ) -> None:
-    if _BOT is None:
+    if _BOT is None or _SETTINGS is None:
         raise RuntimeError("Queue service is not initialized.")
 
     caption = f"Готово (9:16). Задача #{task_id}."
+    logger.info("notify start task_id %s", task_id)
     input_file = FSInputFile(prepared_path)
     if media_type == "photo":
         await _BOT.send_photo(user_id, input_file, caption=caption)
@@ -294,3 +344,12 @@ async def _send_prepared_media(
         await _BOT.send_video(user_id, input_file, caption=caption)
     else:
         raise ValueError(f"Unsupported media_type {media_type}")
+
+    task_caption = get_task_caption(_SETTINGS.SQLITE_PATH, task_id)
+    caption_text = task_caption.strip() if task_caption else ""
+    if caption_text:
+        body = f"Подпись для сторис (задача #{task_id}):\n\n{caption_text}"
+    else:
+        body = f"Подпись для сторис (задача #{task_id}):\n\n(пусто)"
+    await _BOT.send_message(user_id, body)
+    logger.info("notify ok task_id %s", task_id)

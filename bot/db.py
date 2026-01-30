@@ -143,6 +143,25 @@ def get_task(
         )
 
 
+def get_task_caption(sqlite_path: str, task_id: int) -> str | None:
+    """Fetch the caption for a task."""
+
+    with get_connection(sqlite_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT caption
+            FROM tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return row[0]
+
+
 def set_task_status(sqlite_path: str, task_id: int, status: str) -> None:
     """Update the status field for a task."""
 
