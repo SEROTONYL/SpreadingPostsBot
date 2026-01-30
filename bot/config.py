@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
     ADMIN_USER_ID: int
     SQLITE_PATH: str = "bot/data.db"
+    WORKER_CONCURRENCY: int = 1
+    MAX_RETRIES: int = 3
+    DOWNLOAD_TIMEOUT_SECONDS: int | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
