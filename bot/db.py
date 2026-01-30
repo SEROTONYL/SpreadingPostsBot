@@ -48,3 +48,44 @@ def init_db(sqlite_path: str) -> None:
             """
         )
         connection.commit()
+
+
+def create_task(
+    sqlite_path: str,
+    user_id: int,
+    tg_message_id: int,
+    media_type: str,
+    file_id: str | None,
+    caption: str | None,
+    status: str,
+    created_at: str,
+) -> int:
+    """Create a new task record and return its ID."""
+
+    with get_connection(sqlite_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO tasks (
+                user_id,
+                tg_message_id,
+                media_type,
+                file_id,
+                caption,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                tg_message_id,
+                media_type,
+                file_id,
+                caption,
+                status,
+                created_at,
+            ),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
