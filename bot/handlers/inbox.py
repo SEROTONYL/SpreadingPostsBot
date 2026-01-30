@@ -99,7 +99,7 @@ async def handle_text(message: Message) -> None:
         media_type="text",
         file_id=None,
         caption=message.text,
-        status="new",
+        status="prepared",
         created_at=now_iso(),
     )
     logger.info(

@@ -25,6 +25,9 @@ async def main() -> None:
     inbox_dir = Path("bot/storage/inbox")
     inbox_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Inbox directory ready at %s", inbox_dir.as_posix())
+    prepared_dir = Path("bot/storage/prepared")
+    prepared_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Prepared directory ready at %s", prepared_dir.as_posix())
 
     bot = Bot(token=settings.BOT_TOKEN)
     dispatcher = Dispatcher()

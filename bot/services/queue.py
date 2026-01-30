@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from aiogram import Bot
+from aiogram.types import FSInputFile
 
 from bot.config import Settings
 from bot.db import (
@@ -12,8 +13,12 @@ from bot.db import (
     get_task,
     increment_attempt,
     set_task_downloaded,
+    set_task_failed,
+    set_task_prepared,
+    set_task_preparing,
     set_task_status,
 )
+from bot.services.prepare_media import prepare_to_story
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +27,7 @@ _IN_PROGRESS: set[int] = set()
 _BOT: Bot | None = None
 _SETTINGS: Settings | None = None
 _INBOX_DIR = Path("bot/storage/inbox")
+_PREPARED_DIR = Path("bot/storage/prepared")
 _RETRY_DELAYS = [2, 5, 15]
 
 
@@ -102,49 +108,117 @@ async def _process_task(task_id: int) -> None:
         logger.error("task %s not found", task_id)
         return
 
-    user_id, tg_message_id, media_type, file_id, _caption, src_path, status, attempts = task
-    if src_path:
-        logger.info("task %s already has src_path, skipping", task_id)
-        return
+    (
+        user_id,
+        tg_message_id,
+        media_type,
+        file_id,
+        _caption,
+        src_path,
+        prepared_path,
+        status,
+        attempts,
+    ) = task
+
     if status == "failed":
         logger.info("task %s already failed, skipping", task_id)
         return
+    if status == "prepared" and prepared_path:
+        logger.info("task %s already prepared, skipping", task_id)
+        return
+    if media_type == "text":
+        logger.info("task %s is text, skipping", task_id)
+        return
 
-    set_task_status(_SETTINGS.SQLITE_PATH, task_id, "downloading")
+    if src_path and status in {"queued", "downloading"}:
+        set_task_status(_SETTINGS.SQLITE_PATH, task_id, "downloaded")
+        status = "downloaded"
+    elif not src_path and status in {"downloaded", "preparing"}:
+        set_task_status(_SETTINGS.SQLITE_PATH, task_id, "queued")
+        status = "queued"
 
-    try:
-        if not file_id:
-            raise ValueError("missing file_id")
-        target_path = await _download_file(
-            bot=_BOT,
-            task_id=task_id,
-            tg_message_id=tg_message_id,
-            media_type=media_type,
-            file_id=file_id,
-            timeout_seconds=_SETTINGS.DOWNLOAD_TIMEOUT_SECONDS,
-        )
-        set_task_downloaded(_SETTINGS.SQLITE_PATH, task_id, target_path.as_posix())
-        logger.info("download ok task %s path %s", task_id, target_path.as_posix())
-        await _BOT.send_message(user_id, f"Скачал. Задача #{task_id}.")
-    except Exception as exc:
-        attempt_number = attempts + 1
-        increment_attempt(_SETTINGS.SQLITE_PATH, task_id, str(exc))
-        logger.error(
-            "download failed task %s attempt %s error %s",
-            task_id,
-            attempt_number,
-            exc,
-        )
-        if attempt_number >= _SETTINGS.MAX_RETRIES:
-            set_task_status(_SETTINGS.SQLITE_PATH, task_id, "failed")
-            await _BOT.send_message(
-                user_id,
-                f"Не смог скачать после попыток. Задача #{task_id}.",
+    if status in {"queued", "downloading"} and not src_path:
+        set_task_status(_SETTINGS.SQLITE_PATH, task_id, "downloading")
+        try:
+            if not file_id:
+                raise ValueError("missing file_id")
+            target_path = await _download_file(
+                bot=_BOT,
+                task_id=task_id,
+                tg_message_id=tg_message_id,
+                media_type=media_type,
+                file_id=file_id,
+                timeout_seconds=_SETTINGS.DOWNLOAD_TIMEOUT_SECONDS,
+            )
+            set_task_downloaded(_SETTINGS.SQLITE_PATH, task_id, target_path.as_posix())
+            logger.info("download ok task %s path %s", task_id, target_path.as_posix())
+            src_path = target_path.as_posix()
+            status = "downloaded"
+        except Exception as exc:
+            await _handle_failure(
+                task_id=task_id,
+                user_id=user_id,
+                attempts=attempts,
+                error=exc,
+                failure_message="Не смог скачать после попыток. Задача",
             )
             return
-        delay = _next_delay(attempt_number)
-        logger.info("retry scheduled task_id %s delay %s", task_id, delay)
-        asyncio.create_task(delayed_reenqueue(task_id, delay))
+
+    if status in {"downloaded", "preparing"} and src_path:
+        try:
+            logger.info("prepare start task %s src %s", task_id, src_path)
+            set_task_preparing(_SETTINGS.SQLITE_PATH, task_id)
+            prepared_path = await _prepare_media(
+                task_id=task_id,
+                tg_message_id=tg_message_id,
+                media_type=media_type,
+                src_path=Path(src_path),
+            )
+            set_task_prepared(_SETTINGS.SQLITE_PATH, task_id, prepared_path.as_posix())
+            logger.info("prepare ok task %s path %s", task_id, prepared_path.as_posix())
+            await _send_prepared_media(
+                user_id=user_id,
+                task_id=task_id,
+                media_type=media_type,
+                prepared_path=prepared_path,
+            )
+        except Exception as exc:
+            logger.error("prepare failed task %s error %s", task_id, exc)
+            await _handle_failure(
+                task_id=task_id,
+                user_id=user_id,
+                attempts=attempts,
+                error=exc,
+                failure_message="Не смог подготовить 9:16. Задача",
+            )
+
+
+async def _handle_failure(
+    *,
+    task_id: int,
+    user_id: int,
+    attempts: int,
+    error: Exception,
+    failure_message: str,
+) -> None:
+    if _BOT is None or _SETTINGS is None:
+        raise RuntimeError("Queue service is not initialized.")
+
+    attempt_number = attempts + 1
+    increment_attempt(_SETTINGS.SQLITE_PATH, task_id, str(error))
+    logger.error(
+        "task %s attempt %s error %s",
+        task_id,
+        attempt_number,
+        error,
+    )
+    if attempt_number >= _SETTINGS.MAX_RETRIES:
+        set_task_failed(_SETTINGS.SQLITE_PATH, task_id, str(error))
+        await _BOT.send_message(user_id, f"{failure_message} #{task_id}.")
+        return
+    delay = _next_delay(attempt_number)
+    logger.info("retry scheduled task_id %s delay %s", task_id, delay)
+    asyncio.create_task(delayed_reenqueue(task_id, delay))
 
 
 async def delayed_reenqueue(task_id: int, delay_seconds: int) -> None:
@@ -182,3 +256,41 @@ async def _download_file(
     else:
         await _do_download()
     return target_path
+
+
+async def _prepare_media(
+    *,
+    task_id: int,
+    tg_message_id: int,
+    media_type: str,
+    src_path: Path,
+) -> Path:
+    _PREPARED_DIR.mkdir(parents=True, exist_ok=True)
+    if media_type == "photo":
+        out_path = _PREPARED_DIR / f"task_{task_id}_{tg_message_id}_story.jpg"
+    elif media_type == "video":
+        out_path = _PREPARED_DIR / f"task_{task_id}_{tg_message_id}_story.mp4"
+    else:
+        raise ValueError(f"Unsupported media_type {media_type}")
+
+    return await prepare_to_story(src_path, media_type, out_path)
+
+
+async def _send_prepared_media(
+    *,
+    user_id: int,
+    task_id: int,
+    media_type: str,
+    prepared_path: Path,
+) -> None:
+    if _BOT is None:
+        raise RuntimeError("Queue service is not initialized.")
+
+    caption = f"Готово (9:16). Задача #{task_id}."
+    input_file = FSInputFile(prepared_path)
+    if media_type == "photo":
+        await _BOT.send_photo(user_id, input_file, caption=caption)
+    elif media_type == "video":
+        await _BOT.send_video(user_id, input_file, caption=caption)
+    else:
+        raise ValueError(f"Unsupported media_type {media_type}")
