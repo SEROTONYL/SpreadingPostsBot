@@ -1,4 +1,0 @@
-telethon
-aiosqlite
-pydantic-settings
-python-dotenv

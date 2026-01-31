@@ -1,1 +1,0 @@
-"""SpreadingPostsBot package."""
