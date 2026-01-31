@@ -20,21 +20,33 @@ class Database:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
 
-    async def _connect(self) -> aiosqlite.Connection:
-        conn = await aiosqlite.connect(self._db_path)
+    async def _configure_connection(self, conn: aiosqlite.Connection) -> None:
         conn.row_factory = aiosqlite.Row
-        return conn
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA busy_timeout=5000;")
 
     async def ensure_indexes(self) -> None:
-        try:
-            async with await self._connect() as conn:
+        async with aiosqlite.connect(self._db_path) as conn:
+            await self._configure_connection(conn)
+            try:
                 await conn.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS deliveries_target_task_unique "
                     "ON deliveries(target, task_id)"
                 )
                 await conn.commit()
-        except Exception:
-            logger.warning("failed to ensure unique index on deliveries", exc_info=True)
+            except aiosqlite.OperationalError as exc:
+                if "no such table" in str(exc).lower():
+                    logger.warning(
+                        "deliveries table missing; skipping unique index creation"
+                    )
+                else:
+                    logger.warning(
+                        "failed to ensure unique index on deliveries", exc_info=True
+                    )
+            except Exception:
+                logger.warning(
+                    "failed to ensure unique index on deliveries", exc_info=True
+                )
 
     async def fetch_queued(self, limit: int) -> List[DeliveryTask]:
         query = (
@@ -45,7 +57,8 @@ class Database:
             "ORDER BY d.id "
             "LIMIT ?"
         )
-        async with await self._connect() as conn:
+        async with aiosqlite.connect(self._db_path) as conn:
+            await self._configure_connection(conn)
             cursor = await conn.execute(query, ("tg_story", "queued", limit))
             rows = await cursor.fetchall()
         return [
@@ -60,7 +73,8 @@ class Database:
         ]
 
     async def mark_failed(self, delivery_id: int, error: str) -> None:
-        async with await self._connect() as conn:
+        async with aiosqlite.connect(self._db_path) as conn:
+            await self._configure_connection(conn)
             await conn.execute(
                 "UPDATE deliveries SET status = ?, error = ? WHERE id = ?",
                 ("failed", error, delivery_id),
@@ -68,7 +82,8 @@ class Database:
             await conn.commit()
 
     async def mark_posted(self, delivery_id: int, external_id: str) -> None:
-        async with await self._connect() as conn:
+        async with aiosqlite.connect(self._db_path) as conn:
+            await self._configure_connection(conn)
             await conn.execute(
                 "UPDATE deliveries SET status = ?, external_id = ?, error = NULL WHERE id = ?",
                 ("posted", external_id, delivery_id),
