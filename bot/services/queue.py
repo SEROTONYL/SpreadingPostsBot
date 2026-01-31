@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from aiogram import Bot
+from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile
 
 from bot.config import Settings
@@ -408,7 +409,7 @@ async def _notify_prepared_media(
         f"Подпись для сторис (задача #{task_id}):\n\n"
         f"<pre>{escaped_caption}</pre>"
     )
-    await _BOT.send_message(user_id, body, parse_mode="HTML")
+    await _BOT.send_message(user_id, body, parse_mode=ParseMode.HTML)
     logger.info("notify ok task_id %s", task_id)
 
 
@@ -456,10 +457,12 @@ async def _run_ocr_if_needed(
     if ocr_text:
         set_task_ocr_text(_SETTINGS.SQLITE_PATH, task_id, ocr_text)
         logger.info("ocr ok task_id %s length %s", task_id, len(ocr_text))
-        await _BOT.send_message(
-            user_id,
-            f"Текст с первых кадров (OCR) (задача #{task_id}):\\n\\n{ocr_text}",
+        escaped_ocr_text = html_escape(ocr_text)
+        ocr_body = (
+            f"Текст с первых кадров (OCR) (задача #{task_id}):\n\n"
+            f"<pre>{escaped_ocr_text}</pre>"
         )
+        await _BOT.send_message(user_id, ocr_body, parse_mode=ParseMode.HTML)
         return
 
     logger.info("ocr empty task_id %s", task_id)

@@ -10,8 +10,11 @@ logger = logging.getLogger(__name__)
 _FRAMES_PER_SECOND = 8
 _FRAME_SECONDS = 2
 _MAX_TEXT_LENGTH = 1000
-_MIN_LINE_LENGTH = 2
-_ALLOWED_RATIO = 0.5
+_MIN_LINE_LENGTH = 3
+_MIN_ALNUM_COUNT = 3
+_MIN_ALNUM_RATIO = 0.35
+_MAX_JUNK_RATIO = 0.35
+_JUNK_CHARS = set(r"@|\/=_*[]{}^~")
 
 
 class TesseractUnavailable(RuntimeError):
@@ -59,8 +62,12 @@ def run_tesseract(image_path: Path) -> str:
                 "stdout",
                 "-l",
                 lang,
+                "--oem",
+                "1",
                 "--psm",
                 "6",
+                "-c",
+                "preserve_interword_spaces=1",
             ],
             check=True,
             capture_output=True,
@@ -80,9 +87,16 @@ def run_tesseract(image_path: Path) -> str:
 def _line_is_noisy(line: str) -> bool:
     if not line:
         return True
-    allowed = sum(1 for char in line if char.isalnum() or char.isspace())
-    ratio = allowed / max(len(line), 1)
-    return ratio < _ALLOWED_RATIO
+    line_length = len(line)
+    if line_length < _MIN_LINE_LENGTH:
+        return True
+    alnum_count = sum(1 for char in line if char.isalpha() or char.isdigit())
+    junk_count = sum(1 for char in line if char in _JUNK_CHARS)
+    if alnum_count < _MIN_ALNUM_COUNT:
+        return True
+    alnum_ratio = alnum_count / line_length
+    junk_ratio = junk_count / line_length
+    return alnum_ratio < _MIN_ALNUM_RATIO or junk_ratio > _MAX_JUNK_RATIO
 
 
 def _clean_text(text: str) -> str:
@@ -90,8 +104,6 @@ def _clean_text(text: str) -> str:
     cleaned_lines: list[str] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
-        if len(line) < _MIN_LINE_LENGTH:
-            continue
         if _line_is_noisy(line):
             continue
         if line in seen:
