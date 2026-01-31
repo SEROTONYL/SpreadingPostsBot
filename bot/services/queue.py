@@ -82,6 +82,12 @@ def _next_delay(attempt_number: int) -> int:
     return _RETRY_DELAYS[-1]
 
 
+def html_escape(text: str) -> str:
+    """Escape HTML entities for safe Telegram HTML formatting."""
+
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _set_task_last_error(sqlite_path: str, task_id: int, error_text: str) -> None:
     with sqlite3.connect(sqlite_path) as connection:
         cursor = connection.cursor()
@@ -395,10 +401,14 @@ async def _notify_prepared_media(
     task_caption = get_task_caption(_SETTINGS.SQLITE_PATH, task_id)
     caption_text = task_caption.strip() if task_caption else ""
     if caption_text:
-        body = f"Подпись для сторис (задача #{task_id}):\n\n{caption_text}"
+        escaped_caption = html_escape(caption_text)
     else:
-        body = f"Подпись для сторис (задача #{task_id}):\n\n(пусто)"
-    await _BOT.send_message(user_id, body)
+        escaped_caption = "(пусто)"
+    body = (
+        f"Подпись для сторис (задача #{task_id}):\n\n"
+        f"<pre>{escaped_caption}</pre>"
+    )
+    await _BOT.send_message(user_id, body, parse_mode="HTML")
     logger.info("notify ok task_id %s", task_id)
 
 

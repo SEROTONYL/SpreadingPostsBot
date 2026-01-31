@@ -130,6 +130,33 @@ async def prepare_photo_story(src_path: Path, out_path: Path) -> Path:
     return out_path
 
 
+async def prepare_photo_cover(src_path: Path, out_path: Path) -> Path:
+    """Prepare a photo into a 9:16 story using cover crop."""
+
+    filter_graph = (
+        f"scale={_TARGET_WIDTH}:{_TARGET_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={_TARGET_WIDTH}:{_TARGET_HEIGHT}"
+    )
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        src_path.as_posix(),
+        "-vf",
+        filter_graph,
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        out_path.as_posix(),
+    ]
+    return_code, stdout_text, stderr_text = await _run_command(command)
+    if return_code != 0:
+        raise RuntimeError(f"ffmpeg photo cover failed: {stderr_text or stdout_text}")
+    return out_path
+
+
 async def convert_photo_to_jpg(src_path: Path, out_path: Path) -> Path:
     """Convert a photo to JPEG without resizing."""
 
@@ -194,6 +221,46 @@ async def prepare_video_story(src_path: Path, out_path: Path) -> Path:
     return out_path
 
 
+async def prepare_video_cover(src_path: Path, out_path: Path) -> Path:
+    """Prepare a video into a 9:16 story using cover crop."""
+
+    filter_graph = (
+        f"scale={_TARGET_WIDTH}:{_TARGET_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={_TARGET_WIDTH}:{_TARGET_HEIGHT},"
+        "format=yuv420p[v]"
+    )
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        src_path.as_posix(),
+        "-filter_complex",
+        filter_graph,
+        "-map",
+        "[v]",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        out_path.as_posix(),
+    ]
+    return_code, stdout_text, stderr_text = await _run_command(command)
+    if return_code != 0:
+        raise RuntimeError(f"ffmpeg video cover failed: {stderr_text or stdout_text}")
+    return out_path
+
+
 async def convert_video_to_mp4(src_path: Path, out_path: Path) -> Path:
     """Convert a video to MP4 without resizing."""
 
@@ -229,6 +296,10 @@ async def prepare_to_story(src_path: Path, media_type: str, out_path: Path) -> P
     width, height = await probe_dimensions(src_path)
     if is_story_like(width, height):
         task_id = _extract_task_id(out_path)
+        if task_id:
+            logger.info("prepare mode: passthrough task_id %s", task_id)
+        else:
+            logger.info("prepare mode: passthrough src %s", src_path.as_posix())
         if media_type == "video":
             if src_path.suffix.lower() == ".mp4":
                 if task_id:
@@ -254,9 +325,25 @@ async def prepare_to_story(src_path: Path, media_type: str, out_path: Path) -> P
                 return out_path
             return await convert_photo_to_jpg(src_path, out_path)
 
-    if media_type == "photo":
-        return await prepare_photo_story(src_path, out_path)
-    if media_type == "video":
-        return await prepare_video_story(src_path, out_path)
+    if height >= width:
+        task_id = _extract_task_id(out_path)
+        if task_id:
+            logger.info("prepare mode: cover task_id %s", task_id)
+        else:
+            logger.info("prepare mode: cover src %s", src_path.as_posix())
+        if media_type == "photo":
+            return await prepare_photo_cover(src_path, out_path)
+        if media_type == "video":
+            return await prepare_video_cover(src_path, out_path)
+    else:
+        task_id = _extract_task_id(out_path)
+        if task_id:
+            logger.info("prepare mode: blurfill task_id %s", task_id)
+        else:
+            logger.info("prepare mode: blurfill src %s", src_path.as_posix())
+        if media_type == "photo":
+            return await prepare_photo_story(src_path, out_path)
+        if media_type == "video":
+            return await prepare_video_story(src_path, out_path)
 
     raise ValueError(f"unsupported media_type for prepare: {media_type}")
