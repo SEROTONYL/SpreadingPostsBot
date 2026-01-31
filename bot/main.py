@@ -28,6 +28,9 @@ async def main() -> None:
     prepared_dir = Path("bot/storage/prepared")
     prepared_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Prepared directory ready at %s", prepared_dir.as_posix())
+    ocr_frames_dir = Path("bot/storage/ocr_frames")
+    ocr_frames_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("OCR frames directory ready at %s", ocr_frames_dir.as_posix())
 
     bot = Bot(token=settings.BOT_TOKEN)
     dispatcher = Dispatcher()

@@ -51,6 +51,7 @@ def init_db(sqlite_path: str) -> None:
         )
         _ensure_column(cursor, "tasks", "attempts", "INTEGER DEFAULT 0")
         _ensure_column(cursor, "tasks", "last_error", "TEXT")
+        _ensure_column(cursor, "tasks", "ocr_text", "TEXT")
         connection.commit()
 
 
@@ -222,6 +223,22 @@ def set_task_failed(sqlite_path: str, task_id: int, error_text: str) -> None:
             WHERE id = ?
             """,
             ("failed", error_text, task_id),
+        )
+        connection.commit()
+
+
+def set_task_ocr_text(sqlite_path: str, task_id: int, ocr_text: str | None) -> None:
+    """Store OCR text for a task."""
+
+    with get_connection(sqlite_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE tasks
+            SET ocr_text = ?
+            WHERE id = ?
+            """,
+            (ocr_text, task_id),
         )
         connection.commit()
 
