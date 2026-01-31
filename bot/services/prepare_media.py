@@ -77,6 +77,20 @@ def is_already_story_ratio(width: int, height: int) -> bool:
     return abs(ratio - _STORY_RATIO) / _STORY_RATIO <= _RATIO_TOLERANCE
 
 
+def is_story_like(width: int, height: int) -> bool:
+    """Return True if media already fits story-friendly dimensions."""
+
+    if width <= 0 or height <= 0:
+        return False
+    if is_already_story_ratio(width, height):
+        return True
+    if width == _TARGET_WIDTH and height == _TARGET_HEIGHT:
+        return True
+    if height > width and width <= 1100 and height >= 1700:
+        return True
+    return False
+
+
 def _extract_task_id(out_path: Path) -> str | None:
     match = _TASK_ID_PATTERN.search(out_path.stem)
     if match:
@@ -113,6 +127,26 @@ async def prepare_photo_story(src_path: Path, out_path: Path) -> Path:
     return_code, stdout_text, stderr_text = await _run_command(command)
     if return_code != 0:
         raise RuntimeError(f"ffmpeg photo failed: {stderr_text or stdout_text}")
+    return out_path
+
+
+async def convert_photo_to_jpg(src_path: Path, out_path: Path) -> Path:
+    """Convert a photo to JPEG without resizing."""
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        src_path.as_posix(),
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        out_path.as_posix(),
+    ]
+    return_code, stdout_text, stderr_text = await _run_command(command)
+    if return_code != 0:
+        raise RuntimeError(f"ffmpeg photo convert failed: {stderr_text or stdout_text}")
     return out_path
 
 
@@ -160,19 +194,65 @@ async def prepare_video_story(src_path: Path, out_path: Path) -> Path:
     return out_path
 
 
+async def convert_video_to_mp4(src_path: Path, out_path: Path) -> Path:
+    """Convert a video to MP4 without resizing."""
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        src_path.as_posix(),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        out_path.as_posix(),
+    ]
+    return_code, stdout_text, stderr_text = await _run_command(command)
+    if return_code != 0:
+        raise RuntimeError(f"ffmpeg video convert failed: {stderr_text or stdout_text}")
+    return out_path
+
+
 async def prepare_to_story(src_path: Path, media_type: str, out_path: Path) -> Path:
     """Prepare media for 9:16 stories and return the prepared path."""
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     width, height = await probe_dimensions(src_path)
-    if is_already_story_ratio(width, height):
+    if is_story_like(width, height):
         task_id = _extract_task_id(out_path)
-        if task_id:
-            logger.info("prepare skip (already 9:16) task_id %s", task_id)
-        else:
-            logger.info("prepare skip (already 9:16) src %s", src_path.as_posix())
-        shutil.copy2(src_path, out_path)
-        return out_path
+        if media_type == "video":
+            if src_path.suffix.lower() == ".mp4":
+                if task_id:
+                    logger.info("prepare passthrough (already story-like) task_id %s", task_id)
+                else:
+                    logger.info(
+                        "prepare passthrough (already story-like) src %s",
+                        src_path.as_posix(),
+                    )
+                shutil.copy2(src_path, out_path)
+                return out_path
+            return await convert_video_to_mp4(src_path, out_path)
+        if media_type == "photo":
+            if src_path.suffix.lower() in {".jpg", ".jpeg"}:
+                if task_id:
+                    logger.info("prepare passthrough (already story-like) task_id %s", task_id)
+                else:
+                    logger.info(
+                        "prepare passthrough (already story-like) src %s",
+                        src_path.as_posix(),
+                    )
+                shutil.copy2(src_path, out_path)
+                return out_path
+            return await convert_photo_to_jpg(src_path, out_path)
 
     if media_type == "photo":
         return await prepare_photo_story(src_path, out_path)

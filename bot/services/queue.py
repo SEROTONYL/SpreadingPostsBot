@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from pathlib import Path
 
 from aiogram import Bot
@@ -77,6 +78,20 @@ def _next_delay(attempt_number: int) -> int:
     if attempt_number <= len(_RETRY_DELAYS):
         return _RETRY_DELAYS[attempt_number - 1]
     return _RETRY_DELAYS[-1]
+
+
+def _set_task_last_error(sqlite_path: str, task_id: int, error_text: str) -> None:
+    with sqlite3.connect(sqlite_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE tasks
+            SET last_error = ?
+            WHERE id = ?
+            """,
+            (error_text, task_id),
+        )
+        connection.commit()
 
 
 async def worker_loop(worker_id: int) -> None:
@@ -334,6 +349,22 @@ async def _notify_prepared_media(
 ) -> None:
     if _BOT is None or _SETTINGS is None:
         raise RuntimeError("Queue service is not initialized.")
+
+    size_limit = _SETTINGS.MAX_NOTIFY_MB * 1024 * 1024
+    size_bytes = prepared_path.stat().st_size
+    if size_bytes > size_limit:
+        size_mb = size_bytes / (1024 * 1024)
+        logger.info("notify skipped too large task_id %s size_mb %.2f", task_id, size_mb)
+        _set_task_last_error(_SETTINGS.SQLITE_PATH, task_id, "notify skipped: too large")
+        await _BOT.send_message(
+            user_id,
+            (
+                "Файл готов (9:16), но слишком большой для отправки ботом "
+                f"(>{_SETTINGS.MAX_NOTIFY_MB}MB). Задача #{task_id}.\n"
+                f"Путь: {prepared_path.as_posix()}."
+            ),
+        )
+        return
 
     caption = f"Готово (9:16). Задача #{task_id}."
     logger.info("notify start task_id %s", task_id)

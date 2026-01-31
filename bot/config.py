@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     WORKER_CONCURRENCY: int = 1
     MAX_RETRIES: int = 3
     DOWNLOAD_TIMEOUT_SECONDS: int | None = None
+    MAX_VIDEO_MB: int = 180
+    MAX_VIDEO_SECONDS: int = 180
+    MAX_NOTIFY_MB: int = 45
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

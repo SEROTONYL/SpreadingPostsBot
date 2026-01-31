@@ -63,6 +63,22 @@ async def handle_video(message: Message) -> None:
         await message.answer("Нет доступа.")
         return
 
+    if message.video and message.video.file_size:
+        size_limit = settings.MAX_VIDEO_MB * 1024 * 1024
+        if message.video.file_size > size_limit:
+            size_mb = message.video.file_size / (1024 * 1024)
+            logger.info(
+                "reject too large input user_id %s msg_id %s size_mb %.2f",
+                message.from_user.id if message.from_user else None,
+                message.message_id,
+                size_mb,
+            )
+            await message.answer(
+                f"Видео слишком большое для обработки ботом (>{settings.MAX_VIDEO_MB}MB). "
+                "Сожми/обрежь и пришли снова."
+            )
+            return
+
     file_id = message.video.file_id if message.video else None
     task_id = create_task(
         settings.SQLITE_PATH,
@@ -81,7 +97,15 @@ async def handle_video(message: Message) -> None:
         message.message_id,
         task_id,
     )
-    await message.answer(f"Принял. Задача #{task_id} поставлена в очередь.")
+    duration = message.video.duration if message.video else None
+    if duration and duration > settings.MAX_VIDEO_SECONDS:
+        logger.info("warn long video task_id %s duration %s", task_id, duration)
+        await message.answer(
+            f"Принял. Задача #{task_id} в очереди. Внимание: видео длиннее "
+            f"{settings.MAX_VIDEO_SECONDS} сек, обработка может занять больше времени."
+        )
+    else:
+        await message.answer(f"Принял. Задача #{task_id} поставлена в очередь.")
 
 
 @router.message(F.chat.type == "private", F.text, ~F.photo, ~F.video)
