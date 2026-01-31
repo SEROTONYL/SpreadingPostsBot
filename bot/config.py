@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     MAX_VIDEO_MB: int = 180
     MAX_VIDEO_SECONDS: int = 180
     MAX_NOTIFY_MB: int = 45
+    MAX_UPLOAD_MB: int = 300
+    SEND_PREVIEW: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
