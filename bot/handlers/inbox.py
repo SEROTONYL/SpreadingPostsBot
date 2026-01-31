@@ -116,6 +116,12 @@ async def handle_text(message: Message) -> None:
         await message.answer("Нет доступа.")
         return
 
+    text = (message.text or "").strip()
+    if not text:
+        return
+    if text.startswith("/"):
+        return
+
     task_id = create_task(
         settings.SQLITE_PATH,
         user_id=message.from_user.id,
