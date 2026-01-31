@@ -26,6 +26,10 @@ def init_db(sqlite_path: str) -> None:
                 tg_message_id INTEGER,
                 media_type TEXT,
                 file_id TEXT,
+                file_unique_id TEXT,
+                file_name TEXT,
+                mime_type TEXT,
+                file_size INTEGER,
                 caption TEXT,
                 src_path TEXT,
                 prepared_path TEXT,
@@ -52,6 +56,10 @@ def init_db(sqlite_path: str) -> None:
         _ensure_column(cursor, "tasks", "attempts", "INTEGER DEFAULT 0")
         _ensure_column(cursor, "tasks", "last_error", "TEXT")
         _ensure_column(cursor, "tasks", "ocr_text", "TEXT")
+        _ensure_column(cursor, "tasks", "file_unique_id", "TEXT")
+        _ensure_column(cursor, "tasks", "file_name", "TEXT")
+        _ensure_column(cursor, "tasks", "mime_type", "TEXT")
+        _ensure_column(cursor, "tasks", "file_size", "INTEGER")
         connection.commit()
 
 
@@ -70,6 +78,10 @@ def create_task(
     tg_message_id: int,
     media_type: str,
     file_id: str | None,
+    file_unique_id: str | None,
+    file_name: str | None,
+    mime_type: str | None,
+    file_size: int | None,
     caption: str | None,
     status: str,
     created_at: str,
@@ -85,17 +97,25 @@ def create_task(
                 tg_message_id,
                 media_type,
                 file_id,
+                file_unique_id,
+                file_name,
+                mime_type,
+                file_size,
                 caption,
                 status,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
                 tg_message_id,
                 media_type,
                 file_id,
+                file_unique_id,
+                file_name,
+                mime_type,
+                file_size,
                 caption,
                 status,
                 created_at,

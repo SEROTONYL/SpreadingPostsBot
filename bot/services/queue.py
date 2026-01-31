@@ -391,13 +391,20 @@ async def _notify_prepared_media(
 
     caption = f"Готово (9:16). Задача #{task_id}."
     logger.info("notify start task_id %s", task_id)
-    input_file = FSInputFile(prepared_path)
-    if media_type == "photo":
-        await _BOT.send_photo(user_id, input_file, caption=caption)
-    elif media_type == "video":
-        await _BOT.send_video(user_id, input_file, caption=caption)
-    else:
-        raise ValueError(f"Unsupported media_type {media_type}")
+    extension = prepared_path.suffix
+    if not extension:
+        extension = ".jpg" if media_type == "photo" else ".mp4"
+    filename = f"story_{task_id}{extension}"
+    document_file = FSInputFile(prepared_path, filename=filename)
+    await _BOT.send_document(user_id, document_file, caption=caption)
+    if _SETTINGS.SEND_PREVIEW:
+        preview_file = FSInputFile(prepared_path)
+        if media_type == "photo":
+            await _BOT.send_photo(user_id, preview_file)
+        elif media_type == "video":
+            await _BOT.send_video(user_id, preview_file)
+        else:
+            raise ValueError(f"Unsupported media_type {media_type}")
 
     task_caption = get_task_caption(_SETTINGS.SQLITE_PATH, task_id)
     caption_text = task_caption.strip() if task_caption else ""
