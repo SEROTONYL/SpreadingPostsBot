@@ -53,6 +53,12 @@ def init_db(sqlite_path: str) -> None:
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS deliveries_target_task_unique
+            ON deliveries(target, task_id)
+            """
+        )
         _ensure_column(cursor, "tasks", "attempts", "INTEGER DEFAULT 0")
         _ensure_column(cursor, "tasks", "last_error", "TEXT")
         _ensure_column(cursor, "tasks", "ocr_text", "TEXT")
@@ -123,6 +129,22 @@ def create_task(
         )
         connection.commit()
         return int(cursor.lastrowid)
+
+
+def enqueue_delivery(sqlite_path: str, task_id: int, target: str = "tg_story") -> None:
+    """Create a queued delivery record for a prepared task."""
+
+    with get_connection(sqlite_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO deliveries (task_id, target, status, error, external_id)
+            VALUES (?, ?, ?, NULL, NULL)
+            ON CONFLICT(target, task_id) DO NOTHING
+            """,
+            (task_id, target, "queued"),
+        )
+        connection.commit()
 
 
 def get_task(
