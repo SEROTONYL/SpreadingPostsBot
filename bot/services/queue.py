@@ -11,6 +11,7 @@ from aiogram.types import FSInputFile
 
 from bot.config import Settings
 from bot.db import (
+    enqueue_delivery,
     get_pending_task_ids,
     get_task,
     get_task_caption,
@@ -220,8 +221,14 @@ async def _process_task(task_id: int) -> None:
                 media_type=media_type,
                 src_path=Path(src_path),
             )
-            set_task_prepared(_SETTINGS.SQLITE_PATH, task_id, prepared_path.as_posix())
-            logger.info("prepare ok task %s path %s", task_id, prepared_path.as_posix())
+            prepared_path_value = prepared_path.as_posix()
+            set_task_prepared(_SETTINGS.SQLITE_PATH, task_id, prepared_path_value)
+            logger.info("prepare ok task %s path %s", task_id, prepared_path_value)
+            if prepared_path_value:
+                enqueue_delivery(_SETTINGS.SQLITE_PATH, task_id)
+                logger.info(
+                    "enqueue delivery task_id=%s target=%s", task_id, "tg_story"
+                )
             try:
                 await _notify_prepared_media(
                     user_id=user_id,
