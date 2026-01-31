@@ -3,3 +3,4 @@
 
 ## Требования
 - Установите ffmpeg (ffmpeg + ffprobe).
+- Установите tesseract-ocr и языковые пакеты `rus` и `eng` (минимум `eng`).

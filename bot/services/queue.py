@@ -18,8 +18,10 @@ from bot.db import (
     set_task_failed,
     set_task_prepared,
     set_task_preparing,
+    set_task_ocr_text,
     set_task_status,
 )
+from bot.services.ocr import TesseractUnavailable, ocr_image, ocr_video_first_frames
 from bot.services.prepare_media import prepare_to_story
 
 logger = logging.getLogger(__name__)
@@ -150,6 +152,13 @@ async def _process_task(task_id: int) -> None:
                 media_type=media_type,
                 prepared_path=Path(prepared_path),
             )
+            await _run_ocr_if_needed(
+                task_id=task_id,
+                user_id=user_id,
+                media_type=media_type,
+                prepared_path=Path(prepared_path),
+                src_path=Path(src_path) if src_path else None,
+            )
         except Exception as exc:
             logger.error("notify failed task_id %s error %s", task_id, exc)
             await _handle_notify_failure(
@@ -212,6 +221,13 @@ async def _process_task(task_id: int) -> None:
                     task_id=task_id,
                     media_type=media_type,
                     prepared_path=prepared_path,
+                )
+                await _run_ocr_if_needed(
+                    task_id=task_id,
+                    user_id=user_id,
+                    media_type=media_type,
+                    prepared_path=prepared_path,
+                    src_path=Path(src_path) if src_path else None,
                 )
             except Exception as exc:
                 logger.error("notify failed task_id %s error %s", task_id, exc)
@@ -384,3 +400,61 @@ async def _notify_prepared_media(
         body = f"Подпись для сторис (задача #{task_id}):\n\n(пусто)"
     await _BOT.send_message(user_id, body)
     logger.info("notify ok task_id %s", task_id)
+
+
+async def _run_ocr_if_needed(
+    *,
+    task_id: int,
+    user_id: int,
+    media_type: str,
+    prepared_path: Path,
+    src_path: Path | None,
+) -> None:
+    if _BOT is None or _SETTINGS is None:
+        raise RuntimeError("Queue service is not initialized.")
+
+    task_caption = get_task_caption(_SETTINGS.SQLITE_PATH, task_id)
+    caption_text = task_caption.strip() if task_caption else ""
+    if caption_text:
+        return
+
+    logger.info("ocr start task_id %s media_type %s", task_id, media_type)
+    ocr_text = ""
+    try:
+        if media_type == "video":
+            ocr_text = ocr_video_first_frames(prepared_path, task_id)
+        elif media_type == "photo":
+            chosen_path = prepared_path
+            if src_path and not prepared_path.exists():
+                chosen_path = src_path
+            ocr_text = ocr_image(chosen_path, task_id)
+        else:
+            return
+    except TesseractUnavailable as exc:
+        logger.error("ocr failed task_id %s error %s", task_id, exc)
+        await _BOT.send_message(
+            user_id, "OCR недоступен на сервере (tesseract не найден)."
+        )
+        return
+    except Exception as exc:
+        logger.error("ocr failed task_id %s error %s", task_id, exc)
+        await _BOT.send_message(
+            user_id, "OCR недоступен на сервере (tesseract не найден)."
+        )
+        return
+
+    if ocr_text:
+        set_task_ocr_text(_SETTINGS.SQLITE_PATH, task_id, ocr_text)
+        logger.info("ocr ok task_id %s length %s", task_id, len(ocr_text))
+        await _BOT.send_message(
+            user_id,
+            f"Текст с первых кадров (OCR) (задача #{task_id}):\\n\\n{ocr_text}",
+        )
+        return
+
+    logger.info("ocr empty task_id %s", task_id)
+    set_task_ocr_text(_SETTINGS.SQLITE_PATH, task_id, None)
+    await _BOT.send_message(
+        user_id,
+        f"OCR (задача #{task_id}): ничего уверенно не распознал.",
+    )
